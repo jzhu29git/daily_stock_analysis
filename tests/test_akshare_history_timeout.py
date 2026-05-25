@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Regression tests for Akshare historical fallback timeout handling."""
 
+import multiprocessing
 import sys
 import time
 from types import SimpleNamespace
@@ -15,17 +16,41 @@ ensure_litellm_stub()
 from data_provider.akshare_fetcher import AkshareFetcher, _akshare_call_with_timeout
 
 
+def _sleep_for(seconds: float) -> None:
+    time.sleep(seconds)
+
+
 def test_akshare_call_with_timeout_returns_promptly() -> None:
     started = time.monotonic()
 
     with pytest.raises(TimeoutError, match="unit-hang"):
         _akshare_call_with_timeout(
-            lambda: time.sleep(0.2),
+            _sleep_for,
+            0.2,
             timeout=0.01,
             call_name="unit-hang",
         )
 
     assert time.monotonic() - started < 0.5
+
+
+def test_akshare_call_with_timeout_reaps_timed_out_worker_process() -> None:
+    call_name = "unit-hang-reap"
+
+    with pytest.raises(TimeoutError, match=call_name):
+        _akshare_call_with_timeout(
+            _sleep_for,
+            5,
+            timeout=0.01,
+            call_name=call_name,
+        )
+
+    leaked = [
+        process
+        for process in multiprocessing.active_children()
+        if process.name == f"akshare-{call_name}"
+    ]
+    assert leaked == []
 
 
 @pytest.mark.parametrize(
