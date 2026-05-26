@@ -20,6 +20,80 @@ def _sleep_for(seconds: float) -> None:
     time.sleep(seconds)
 
 
+def _return_value(value):
+    return value
+
+
+def test_akshare_call_with_timeout_uses_runtime_default_context(monkeypatch) -> None:
+    requested_methods = []
+
+    class FakeConnection:
+        def __init__(self, messages):
+            self.messages = messages
+
+        def send(self, value):
+            self.messages.append(value)
+
+        def poll(self, timeout):
+            return bool(self.messages)
+
+        def recv(self):
+            if not self.messages:
+                raise EOFError
+            return self.messages.pop(0)
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, target, args, name, daemon):
+            self.target = target
+            self.args = args
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            self.target(*self.args)
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return False
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    class FakeContext:
+        def Pipe(self, duplex=False):
+            messages = []
+            return FakeConnection(messages), FakeConnection(messages)
+
+        Process = FakeProcess
+
+    def fake_get_context(method=None):
+        requested_methods.append(method)
+        return FakeContext()
+
+    monkeypatch.setattr(
+        "data_provider.akshare_fetcher.multiprocessing.get_context",
+        fake_get_context,
+    )
+
+    result = _akshare_call_with_timeout(
+        _return_value,
+        "ok",
+        timeout=1,
+        call_name="unit-default-context",
+    )
+
+    assert result == "ok"
+    assert requested_methods == [None]
+
+
 def test_akshare_call_with_timeout_returns_promptly() -> None:
     started = time.monotonic()
 

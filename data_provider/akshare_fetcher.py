@@ -314,11 +314,7 @@ def _akshare_call_with_timeout(
     """Run an akshare call with a bounded wait time."""
     wait_seconds = _AKSHARE_HISTORY_CALL_TIMEOUT if timeout is None else float(timeout)
 
-    ctx = (
-        multiprocessing.get_context("fork")
-        if "fork" in multiprocessing.get_all_start_methods()
-        else multiprocessing.get_context()
-    )
+    ctx = multiprocessing.get_context()
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     process = ctx.Process(
         target=_akshare_timeout_worker,
