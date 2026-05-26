@@ -24,7 +24,7 @@ def _return_value(value):
     return value
 
 
-def test_akshare_call_with_timeout_uses_runtime_default_context(monkeypatch) -> None:
+def test_akshare_call_with_timeout_uses_spawn_context(monkeypatch) -> None:
     requested_methods = []
 
     class FakeConnection:
@@ -91,7 +91,7 @@ def test_akshare_call_with_timeout_uses_runtime_default_context(monkeypatch) -> 
     )
 
     assert result == "ok"
-    assert requested_methods == [None]
+    assert requested_methods == ["spawn"]
 
 
 def test_akshare_call_with_timeout_returns_promptly() -> None:

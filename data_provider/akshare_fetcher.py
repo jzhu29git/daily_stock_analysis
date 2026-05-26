@@ -63,6 +63,7 @@ SINA_REALTIME_ENDPOINT = "hq.sinajs.cn/list"
 TENCENT_REALTIME_ENDPOINT = "qt.gtimg.cn/q"
 _AKSHARE_HISTORY_CALL_TIMEOUT = 30.0
 _AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE = 1.0
+_AKSHARE_TIMEOUT_PROCESS_START_METHOD = "spawn"
 
 
 # User-Agent 池，用于随机轮换
@@ -314,7 +315,7 @@ def _akshare_call_with_timeout(
     """Run an akshare call with a bounded wait time."""
     wait_seconds = _AKSHARE_HISTORY_CALL_TIMEOUT if timeout is None else float(timeout)
 
-    ctx = multiprocessing.get_context()
+    ctx = multiprocessing.get_context(_AKSHARE_TIMEOUT_PROCESS_START_METHOD)
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     process = ctx.Process(
         target=_akshare_timeout_worker,
