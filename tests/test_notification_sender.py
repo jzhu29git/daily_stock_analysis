@@ -164,6 +164,50 @@ class TestFeishuSender(unittest.TestCase):
         self.assertFalse(result)
 
     @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_app_bot_success_when_no_webhook_url(self, mock_post):
+        mock_post.side_effect = [
+            _response(200, {"code": 0, "tenant_access_token": "tat-token"}),
+            _response(200, {"code": 0}),
+        ]
+        cfg = _config(
+            feishu_app_id="cli_xxx",
+            feishu_app_secret="secret",
+            feishu_chat_id="oc_xxx",
+        )
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+        token_call, message_call = mock_post.call_args_list
+        self.assertIn("tenant_access_token/internal", token_call.args[0])
+        self.assertIn("im/v1/messages", message_call.args[0])
+        self.assertEqual(message_call.kwargs["params"], {"receive_id_type": "chat_id"})
+        self.assertEqual(message_call.kwargs["json"]["receive_id"], "oc_xxx")
+        self.assertEqual(message_call.kwargs["json"]["msg_type"], "interactive")
+
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_falls_back_to_app_bot_when_webhook_fails(self, mock_post):
+        mock_post.side_effect = [
+            _response(200, {"code": 19001, "msg": "invalid webhook"}),
+            _response(200, {"code": 0, "tenant_access_token": "tat-token"}),
+            _response(200, {"code": 0}),
+        ]
+        cfg = _config(
+            feishu_webhook_url="https://feishu.example/bad-hook",
+            feishu_app_id="cli_xxx",
+            feishu_app_secret="secret",
+            feishu_chat_id="oc_xxx",
+        )
+        sender = FeishuSender(cfg)
+
+        result = sender.send_to_feishu("hello")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 3)
+
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
     def test_send_success_returns_true(self, mock_post):
         mock_post.return_value = _response(200, {"code": 0})
         cfg = _config(feishu_webhook_url="https://feishu.example/hook")

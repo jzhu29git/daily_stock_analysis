@@ -616,6 +616,7 @@ class Config:
     feishu_app_id: Optional[str] = None
     feishu_app_secret: Optional[str] = None
     feishu_folder_token: Optional[str] = None  # 目标文件夹 Token
+    feishu_chat_id: Optional[str] = None  # 应用机器人群聊 ID，用于无 Webhook 时推送消息
 
     # === 数据源 API Token ===
     tushare_token: Optional[str] = None
@@ -1407,6 +1408,7 @@ class Config:
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
+            feishu_chat_id=os.getenv('FEISHU_CHAT_ID'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
             tickflow_api_key=os.getenv('TICKFLOW_API_KEY'),
             finnhub_api_key=os.getenv('FINNHUB_API_KEY') or None,
@@ -2644,6 +2646,7 @@ class Config:
         has_feishu_app_id = bool((self.feishu_app_id or "").strip())
         has_feishu_app_secret = bool((self.feishu_app_secret or "").strip())
         has_feishu_app_credentials = has_feishu_app_id or has_feishu_app_secret
+        has_feishu_chat_id = bool((self.feishu_chat_id or "").strip())
         has_feishu_doc_token = bool((self.feishu_folder_token or "").strip())
         has_feishu_full_cloud_doc_credentials = (
             has_feishu_app_id
@@ -2653,6 +2656,7 @@ class Config:
         if (
             has_feishu_app_credentials
             and not has_feishu_full_cloud_doc_credentials
+            and not (has_feishu_app_id and has_feishu_app_secret and has_feishu_chat_id)
             and not self.feishu_webhook_url
             and not (self.feishu_stream_enabled and has_feishu_app_id and has_feishu_app_secret)
         ):

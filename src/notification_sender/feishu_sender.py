@@ -8,6 +8,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -40,6 +41,13 @@ class FeishuSender:
         self._feishu_keyword = (getattr(config, 'feishu_webhook_keyword', None) or '').strip()
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._webhook_verify_ssl = getattr(config, 'webhook_verify_ssl', True)
+        self._feishu_app_id = (getattr(config, 'feishu_app_id', None) or '').strip()
+        self._feishu_app_secret = (getattr(config, 'feishu_app_secret', None) or '').strip()
+        self._feishu_chat_id = (getattr(config, 'feishu_chat_id', None) or '').strip()
+        self._tenant_access_token: Optional[str] = None
+
+    def _is_app_bot_configured(self) -> bool:
+        return bool(self._feishu_app_id and self._feishu_app_secret and self._feishu_chat_id)
 
     def _get_keyword_prefix(self) -> str:
         """Return the keyword prefix required by Feishu webhook security settings."""
@@ -111,8 +119,8 @@ class FeishuSender:
         Returns:
             是否发送成功
         """
-        if not self._feishu_url:
-            logger.warning("飞书 Webhook 未配置，跳过推送")
+        if not self._feishu_url and not self._is_app_bot_configured():
+            logger.warning("飞书 Webhook 和应用机器人均未配置，跳过推送")
             return False
         
         # 飞书 lark_md 支持有限，先做格式转换
@@ -248,7 +256,7 @@ class FeishuSender:
             }
         }
 
-        if _post_payload(card_payload):
+        if self._send_payload(card_payload, _post_payload, timeout_seconds=timeout_seconds):
             return True
 
         # 2) 回退为普通文本消息
@@ -259,4 +267,95 @@ class FeishuSender:
             }
         }
 
-        return _post_payload(text_payload)
+        return self._send_payload(text_payload, _post_payload, timeout_seconds=timeout_seconds)
+
+    def _send_payload(
+        self,
+        payload: Dict[str, Any],
+        webhook_sender,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
+        if self._feishu_url and webhook_sender(payload):
+            return True
+        if self._is_app_bot_configured():
+            return self._send_app_bot_message(payload, timeout_seconds=timeout_seconds)
+        return False
+
+    def _get_tenant_access_token(self, *, timeout_seconds: Optional[float] = None) -> Optional[str]:
+        if self._tenant_access_token:
+            return self._tenant_access_token
+
+        response = requests.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={
+                "app_id": self._feishu_app_id,
+                "app_secret": self._feishu_app_secret,
+            },
+            timeout=timeout_seconds or 30,
+        )
+        logger.debug("飞书 tenant_access_token 响应状态码: %s", response.status_code)
+        if response.status_code != 200:
+            logger.error("获取飞书 tenant_access_token 失败: HTTP %s", response.status_code)
+            logger.error("响应内容: %s", response.text)
+            return None
+
+        result = response.json()
+        if result.get("code") != 0:
+            logger.error(
+                "获取飞书 tenant_access_token 返回错误 [code=%s]: %s",
+                result.get("code", "N/A"),
+                result.get("msg", "未知错误"),
+            )
+            logger.error("完整响应: %s", result)
+            return None
+
+        token = (result.get("tenant_access_token") or "").strip()
+        if not token:
+            logger.error("获取飞书 tenant_access_token 成功但响应中没有 token")
+            return None
+        self._tenant_access_token = token
+        return token
+
+    def _send_app_bot_message(self, payload: Dict[str, Any], *, timeout_seconds: Optional[float] = None) -> bool:
+        token = self._get_tenant_access_token(timeout_seconds=timeout_seconds)
+        if not token:
+            return False
+
+        response = requests.post(
+            "https://open.feishu.cn/open-apis/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={
+                "receive_id": self._feishu_chat_id,
+                "msg_type": payload["msg_type"],
+                "content": json.dumps(
+                    payload["card"] if payload["msg_type"] == "interactive" else payload["content"],
+                    ensure_ascii=False,
+                ),
+            },
+            timeout=timeout_seconds or 30,
+        )
+
+        logger.debug("飞书应用机器人响应状态码: %s", response.status_code)
+        logger.debug("飞书应用机器人响应内容: %s", response.text)
+        if response.status_code != 200:
+            logger.error("飞书应用机器人请求失败: HTTP %s", response.status_code)
+            logger.error("响应内容: %s", response.text)
+            return False
+
+        result = response.json()
+        if result.get("code") == 0:
+            logger.info("飞书应用机器人消息发送成功")
+            return True
+
+        logger.error(
+            "飞书应用机器人返回错误 [code=%s]: %s",
+            result.get("code", "N/A"),
+            result.get("msg", "未知错误"),
+        )
+        logger.error("完整响应: %s", result)
+        return False

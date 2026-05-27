@@ -129,6 +129,9 @@ class SystemConfigService:
         "FEISHU_WEBHOOK_URL": ("feishu_webhook_url", "string"),
         "FEISHU_WEBHOOK_SECRET": ("feishu_webhook_secret", "string"),
         "FEISHU_WEBHOOK_KEYWORD": ("feishu_webhook_keyword", "string"),
+        "FEISHU_APP_ID": ("feishu_app_id", "string"),
+        "FEISHU_APP_SECRET": ("feishu_app_secret", "string"),
+        "FEISHU_CHAT_ID": ("feishu_chat_id", "string"),
         "FEISHU_MAX_BYTES": ("feishu_max_bytes", "int"),
         "TELEGRAM_BOT_TOKEN": ("telegram_bot_token", "string"),
         "TELEGRAM_CHAT_ID": ("telegram_chat_id", "string"),
@@ -3159,11 +3162,13 @@ class SystemConfigService:
             "FEISHU_WEBHOOK_KEYWORD",
             "FEISHU_STREAM_ENABLED",
             "FEISHU_FOLDER_TOKEN",
+            "FEISHU_CHAT_ID",
         }
         has_feishu_app_id = bool((effective_map.get("FEISHU_APP_ID") or "").strip())
         has_feishu_app_secret = bool((effective_map.get("FEISHU_APP_SECRET") or "").strip())
         has_feishu_app_credentials = has_feishu_app_id or has_feishu_app_secret
         has_feishu_webhook = bool((effective_map.get("FEISHU_WEBHOOK_URL") or "").strip())
+        has_feishu_chat_id = bool((effective_map.get("FEISHU_CHAT_ID") or "").strip())
         has_feishu_folder_token = bool((effective_map.get("FEISHU_FOLDER_TOKEN") or "").strip())
         has_feishu_full_cloud_doc_credentials = (
             has_feishu_app_id
@@ -3181,6 +3186,7 @@ class SystemConfigService:
         if (
             has_feishu_app_credentials
             and not has_feishu_full_cloud_doc_credentials
+            and not (has_feishu_app_id and has_feishu_app_secret and has_feishu_chat_id)
             and not has_feishu_webhook
             and not (feishu_stream_enabled and has_feishu_app_id and has_feishu_app_secret)
             and (updated_keys & feishu_relevant_keys)
