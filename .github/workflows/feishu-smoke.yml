@@ -1,0 +1,104 @@
+name: Feishu Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat_id:
+        description: "Optional Feishu chat_id override"
+        required: false
+        default: ""
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send minimal Feishu message
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_CHAT_ID: ${{ inputs.chat_id || vars.FEISHU_CHAT_ID || secrets.FEISHU_CHAT_ID }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.request
+          import urllib.error
+
+          app_id = (os.getenv("FEISHU_APP_ID") or "").strip()
+          app_secret = (os.getenv("FEISHU_APP_SECRET") or "").strip()
+          chat_id = (os.getenv("FEISHU_CHAT_ID") or "").strip()
+          run_url = os.getenv("GITHUB_RUN_URL") or ""
+
+          missing = [
+              name
+              for name, value in {
+                  "FEISHU_APP_ID": app_id,
+                  "FEISHU_APP_SECRET": app_secret,
+                  "FEISHU_CHAT_ID": chat_id,
+              }.items()
+              if not value
+          ]
+          if missing:
+              print("Missing required settings: " + ", ".join(missing), file=sys.stderr)
+              sys.exit(2)
+
+          def post_json(url, payload, headers=None):
+              body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+              req = urllib.request.Request(
+                  url,
+                  data=body,
+                  method="POST",
+                  headers={
+                      "Content-Type": "application/json; charset=utf-8",
+                      **(headers or {}),
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      return resp.status, json.loads(resp.read().decode("utf-8"))
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read().decode("utf-8", errors="replace")
+                  try:
+                      data = json.loads(raw)
+                  except json.JSONDecodeError:
+                      data = {"raw": raw}
+                  return exc.code, data
+
+          status, token_result = post_json(
+              "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+              {"app_id": app_id, "app_secret": app_secret},
+          )
+          if status != 200 or token_result.get("code") != 0:
+              print(
+                  "Failed to get tenant_access_token: "
+                  f"http={status} code={token_result.get('code')} msg={token_result.get('msg')}",
+                  file=sys.stderr,
+              )
+              sys.exit(3)
+
+          token = token_result.get("tenant_access_token")
+          content = {
+              "text": (
+                  "Codex Feishu smoke test OK\n"
+                  f"time={time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n"
+                  f"run={run_url}"
+              )
+          }
+          status, send_result = post_json(
+              "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+              {
+                  "receive_id": chat_id,
+                  "msg_type": "text",
+                  "content": json.dumps(content, ensure_ascii=False),
+              },
+              {"Authorization": f"Bearer {token}"},
+          )
+
+          print(f"Feishu send response: http={status} code={send_result.get('code')} msg={send_result.get('msg')}")
+          if status != 200 or send_result.get("code") != 0:
+              sys.exit(4)
+          PY
