@@ -2254,6 +2254,8 @@ class StockAnalysisPipeline:
         try:
             logger.info("生成决策仪表盘日报...")
             report = self._generate_aggregate_report(results, report_type)
+            report_filepath = self.notifier.save_report_to_file(report)
+            logger.info(f"决策仪表盘日报已保存: {report_filepath}")
             
             # 跳过推送（单股推送模式 / 合并模式：报告已由 _save_local_report 保存）
             if skip_push:
@@ -2437,9 +2439,15 @@ class StockAnalysisPipeline:
                     if channel == NotificationChannel.WECHAT:
                         continue
                     if channel == NotificationChannel.FEISHU:
+                        def _send_feishu_report() -> bool:
+                            if self.notifier.send_file_to_feishu(report_filepath):
+                                return True
+                            logger.warning("飞书文件发送失败，将回退为文本/卡片推送")
+                            return self.notifier.send_to_feishu(report)
+
                         channel_success, channel_error = _send_channel_safely(
                             channel.value,
-                            lambda: self.notifier.send_to_feishu(report),
+                            _send_feishu_report,
                         )
                         non_wechat_success = channel_success or non_wechat_success
                         _record_channel_result(

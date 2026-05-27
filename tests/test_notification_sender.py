@@ -11,6 +11,7 @@ import hmac
 import json
 import os
 import sys
+import tempfile
 import unittest
 from email.header import decode_header, make_header
 from email.utils import parseaddr
@@ -206,6 +207,38 @@ class TestFeishuSender(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertEqual(mock_post.call_count, 3)
+
+    @mock.patch("src.notification_sender.feishu_sender.requests.post")
+    def test_send_file_to_feishu_uploads_and_sends_file_message(self, mock_post):
+        mock_post.side_effect = [
+            _response(200, {"code": 0, "tenant_access_token": "tat-token"}),
+            _response(200, {"code": 0, "data": {"file_key": "file_xxx"}}),
+            _response(200, {"code": 0}),
+        ]
+        cfg = _config(
+            feishu_app_id="cli_xxx",
+            feishu_app_secret="secret",
+            feishu_chat_id="oc_xxx",
+        )
+        sender = FeishuSender(cfg)
+
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write("# report\n")
+            path = f.name
+        try:
+            result = sender.send_file_to_feishu(path)
+        finally:
+            os.unlink(path)
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 3)
+        upload_call = mock_post.call_args_list[1]
+        send_call = mock_post.call_args_list[2]
+        self.assertIn("im/v1/files", upload_call.args[0])
+        self.assertEqual(upload_call.kwargs["data"]["file_type"], "stream")
+        self.assertIn("im/v1/messages", send_call.args[0])
+        self.assertEqual(send_call.kwargs["json"]["msg_type"], "file")
+        self.assertEqual(send_call.kwargs["json"]["receive_id"], "oc_xxx")
 
     @mock.patch("src.notification_sender.feishu_sender.requests.post")
     def test_send_success_returns_true(self, mock_post):

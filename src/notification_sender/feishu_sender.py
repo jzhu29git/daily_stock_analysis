@@ -11,6 +11,7 @@ import hmac
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
@@ -48,6 +49,27 @@ class FeishuSender:
 
     def _is_app_bot_configured(self) -> bool:
         return bool(self._feishu_app_id and self._feishu_app_secret and self._feishu_chat_id)
+
+    def send_file_to_feishu(self, file_path: str, *, timeout_seconds: Optional[float] = None) -> bool:
+        """Upload a local report file and send it to the configured Feishu chat."""
+        if not self._is_app_bot_configured():
+            logger.warning("飞书应用机器人未配置，无法发送文件")
+            return False
+
+        path = Path(file_path)
+        if not path.is_file():
+            logger.error("飞书文件发送失败，文件不存在: %s", file_path)
+            return False
+
+        token = self._get_tenant_access_token(timeout_seconds=timeout_seconds)
+        if not token:
+            return False
+
+        file_key = self._upload_app_bot_file(token, path, timeout_seconds=timeout_seconds)
+        if not file_key:
+            return False
+
+        return self._send_app_bot_file_message(file_key, timeout_seconds=timeout_seconds)
 
     def _get_keyword_prefix(self) -> str:
         """Return the keyword prefix required by Feishu webhook security settings."""
@@ -354,6 +376,89 @@ class FeishuSender:
 
         logger.error(
             "飞书应用机器人返回错误 [code=%s]: %s",
+            result.get("code", "N/A"),
+            result.get("msg", "未知错误"),
+        )
+        logger.error("完整响应: %s", result)
+        return False
+
+    def _upload_app_bot_file(
+        self,
+        token: str,
+        path: Path,
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Optional[str]:
+        with path.open("rb") as file_obj:
+            response = requests.post(
+                "https://open.feishu.cn/open-apis/im/v1/files",
+                headers={"Authorization": f"Bearer {token}"},
+                data={
+                    "file_type": "stream",
+                    "file_name": path.name,
+                },
+                files={"file": (path.name, file_obj, "text/markdown")},
+                timeout=timeout_seconds or 60,
+            )
+
+        logger.debug("飞书文件上传响应状态码: %s", response.status_code)
+        logger.debug("飞书文件上传响应内容: %s", response.text)
+        if response.status_code != 200:
+            logger.error("飞书文件上传失败: HTTP %s", response.status_code)
+            logger.error("响应内容: %s", response.text)
+            return None
+
+        result = response.json()
+        if result.get("code") != 0:
+            logger.error(
+                "飞书文件上传返回错误 [code=%s]: %s",
+                result.get("code", "N/A"),
+                result.get("msg", "未知错误"),
+            )
+            logger.error("完整响应: %s", result)
+            return None
+
+        file_key = (result.get("data") or {}).get("file_key")
+        if not file_key:
+            logger.error("飞书文件上传成功但响应中没有 file_key")
+            return None
+        logger.info("飞书文件上传成功: %s", path.name)
+        return str(file_key)
+
+    def _send_app_bot_file_message(self, file_key: str, *, timeout_seconds: Optional[float] = None) -> bool:
+        token = self._get_tenant_access_token(timeout_seconds=timeout_seconds)
+        if not token:
+            return False
+
+        response = requests.post(
+            "https://open.feishu.cn/open-apis/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={
+                "receive_id": self._feishu_chat_id,
+                "msg_type": "file",
+                "content": json.dumps({"file_key": file_key}, ensure_ascii=False),
+            },
+            timeout=timeout_seconds or 30,
+        )
+
+        logger.debug("飞书文件消息响应状态码: %s", response.status_code)
+        logger.debug("飞书文件消息响应内容: %s", response.text)
+        if response.status_code != 200:
+            logger.error("飞书文件消息请求失败: HTTP %s", response.status_code)
+            logger.error("响应内容: %s", response.text)
+            return False
+
+        result = response.json()
+        if result.get("code") == 0:
+            logger.info("飞书文件消息发送成功")
+            return True
+
+        logger.error(
+            "飞书文件消息返回错误 [code=%s]: %s",
             result.get("code", "N/A"),
             result.get("msg", "未知错误"),
         )
